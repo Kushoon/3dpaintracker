@@ -13,24 +13,7 @@
       }
       canvas {
         display: block;
-      }
-      #info {
-        position: absolute;
-        top: 10px;
-        left: 10px;
-        background: rgba(0, 0, 0, 0.7);
-        color: white;
-        padding: 10px;
-        border-radius: 5px;
-        max-width: 300px;
-        z-index: 100;
-      }
-      .colorSwatch {
-        display: inline-block;
-        width: 15px;
-        height: 15px;
-        margin-right: 5px;
-        border: 1px solid #fff;
+        touch-action: none; /* Prevents default touch actions */
       }
       #controls {
         position: absolute;
@@ -41,15 +24,17 @@
         padding: 10px;
         border-radius: 5px;
         z-index: 100;
+        max-width: 90%;
       }
       button {
         background: #555;
         color: white;
         border: none;
-        padding: 5px 10px;
+        padding: 8px 12px;
         margin: 5px;
         border-radius: 3px;
         cursor: pointer;
+        font-size: 14px;
       }
       button:hover {
         background: #777;
@@ -68,27 +53,24 @@
         border-radius: 5px;
         z-index: 100;
       }
+      @media (max-width: 600px) {
+        #controls {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 90%;
+        }
+        button {
+          padding: 10px;
+          margin: 3px;
+          flex-grow: 1;
+        }
+      }
     </style>
   </head>
   <body>
-    <div id="info">
-      <h2>3D Pain Tracker</h2>
-      <p>Click on the model to mark pain points:</p>
-      <p>
-        <span class="colorSwatch" style="background-color: #00ff00"></span>
-        Green: Mild
-      </p>
-      <p>
-        <span class="colorSwatch" style="background-color: #ffa500"></span>
-        Orange: Moderate
-      </p>
-      <p>
-        <span class="colorSwatch" style="background-color: #ff0000"></span> Red:
-        Severe
-      </p>
-      <div id="clickedPart"></div>
-    </div>
-
     <div id="loading">Loading 3D model...</div>
 
     <div id="controls">
@@ -144,6 +126,7 @@
       const mouse = new THREE.Vector2();
       let model = null;
       let decals = [];
+      let isInteracting = false;
 
       // Current decal settings
       let currentColor = 0; // 0: Green, 1: Orange, 2: Red
@@ -193,9 +176,34 @@
       // Load the human_body.glb model
       loadModel();
 
-      // Event listeners
+      // Event listeners for both mouse and touch
       window.addEventListener("resize", onWindowResize);
-      window.addEventListener("click", onClick);
+
+      // Mouse events
+      window.addEventListener("click", handleInteraction);
+
+      // Touch events
+      window.addEventListener(
+        "touchstart",
+        function (event) {
+          // Prevent default to stop scrolling/zooming
+          if (event.target === renderer.domElement) {
+            event.preventDefault();
+          }
+        },
+        { passive: false }
+      );
+
+      window.addEventListener(
+        "touchend",
+        function (event) {
+          if (event.target === renderer.domElement) {
+            event.preventDefault();
+            handleInteraction(event);
+          }
+        },
+        { passive: false }
+      );
 
       // Color button listeners
       document
@@ -352,84 +360,103 @@
         }
       }
 
-      function onClick(event) {
+      function handleInteraction(event) {
         if (!model) return;
 
-        // Don't process clicks on UI elements
+        // Don't process clicks/touches on UI elements
         if (
           event.target.tagName === "BUTTON" ||
-          event.target.closest("#info") ||
           event.target.closest("#controls")
         ) {
           return;
         }
 
-        // Calculate mouse position in normalized device coordinates
-        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        // If we're already handling an interaction, skip
+        if (isInteracting) return;
 
-        // Update the raycaster
-        raycaster.setFromCamera(mouse, camera);
+        isInteracting = true;
 
-        // Find intersections
-        const intersects = raycaster.intersectObject(model, true);
+        try {
+          // For mouse events
+          if (event.type === "click") {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+          }
+          // For touch events
+          else if (
+            event.type === "touchend" &&
+            event.changedTouches &&
+            event.changedTouches.length > 0
+          ) {
+            const touch = event.changedTouches[0];
+            mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+          } else {
+            // If event type is not recognized, exit
+            isInteracting = false;
+            return;
+          }
 
-        if (intersects.length > 0) {
-          const intersection = intersects[0];
+          // Update the raycaster
+          raycaster.setFromCamera(mouse, camera);
 
-          // Get the clicked mesh
-          const mesh = intersection.object;
+          // Find intersections
+          const intersects = raycaster.intersectObject(model, true);
 
-          // Calculate decal orientation - make it face slightly toward the camera
-          const p = intersection.point.clone();
-          const n = intersection.face.normal.clone();
+          if (intersects.length > 0) {
+            const intersection = intersects[0];
 
-          // Get the mesh's world matrix
-          mesh.updateMatrixWorld();
+            // Get the clicked mesh
+            const mesh = intersection.object;
 
-          // Transform normal from local to world space
-          n.transformDirection(mesh.matrixWorld);
+            // Calculate decal orientation - make it face slightly toward the camera
+            const p = intersection.point.clone();
+            const n = intersection.face.normal.clone();
 
-          // Create a rotation matrix from the normal
-          const cameraPosition = camera.position.clone();
-          const toCamera = cameraPosition.sub(p).normalize();
+            // Get the mesh's world matrix
+            mesh.updateMatrixWorld();
 
-          // Blend normal with camera direction slightly
-          const blendedNormal = n
-            .clone()
-            .multiplyScalar(0.8)
-            .add(toCamera.multiplyScalar(0.2))
-            .normalize();
+            // Transform normal from local to world space
+            n.transformDirection(mesh.matrixWorld);
 
-          // Create a rotation that aligns with the blended normal
-          const orientation = new THREE.Quaternion();
-          const up = new THREE.Vector3(0, 1, 0);
-          orientation.setFromUnitVectors(up, blendedNormal);
+            // Create a rotation matrix from the normal
+            const cameraPosition = camera.position.clone();
+            const toCamera = cameraPosition.sub(p).normalize();
 
-          // Create decal geometry
-          const decalGeometry = new THREE.DecalGeometry(
-            mesh,
-            p,
-            orientation,
-            decalSize
-          );
+            // Blend normal with camera direction slightly
+            const blendedNormal = n
+              .clone()
+              .multiplyScalar(0.8)
+              .add(toCamera.multiplyScalar(0.2))
+              .normalize();
 
-          // Create decal mesh with appropriate material
-          const decalMaterial = decalMaterials[currentColor].clone();
-          const decal = new THREE.Mesh(decalGeometry, decalMaterial);
+            // Create a rotation that aligns with the blended normal
+            const orientation = new THREE.Quaternion();
+            const up = new THREE.Vector3(0, 1, 0);
+            orientation.setFromUnitVectors(up, blendedNormal);
 
-          // Store decal color for reference
-          decal.userData.colorIndex = currentColor;
+            // Create decal geometry
+            const decalGeometry = new THREE.DecalGeometry(
+              mesh,
+              p,
+              orientation,
+              decalSize
+            );
 
-          // Add decal to scene and tracking array
-          scene.add(decal);
-          decals.push(decal);
+            // Create decal mesh with appropriate material
+            const decalMaterial = decalMaterials[currentColor].clone();
+            const decal = new THREE.Mesh(decalGeometry, decalMaterial);
 
-          // Display which part was clicked
-          const partName = mesh.name || "body part";
-          document.getElementById("clickedPart").textContent = `Marked ${COLORS[
-            currentColor
-          ].getHexString()} pain on ${partName}`;
+            // Store decal color for reference
+            decal.userData.colorIndex = currentColor;
+
+            // Add decal to scene and tracking array
+            scene.add(decal);
+            decals.push(decal);
+          }
+        } finally {
+          // Always reset the interaction flag
+          isInteracting = false;
         }
       }
 
